@@ -72,17 +72,18 @@ export async function getCases(filters?: {
   organization_id?: number
   limit?: number
 }) {
+  // Build the base query with optional WHERE conditions
   let query = "SELECT * FROM cases"
-  const conditions = []
-  const params = []
+  const conditions: string[] = []
+  const params: any[] = []
 
   if (filters?.status) {
-    conditions.push(`status = $${params.length + 1}`)
+    conditions.push("status = $" + (params.length + 1))
     params.push(filters.status)
   }
 
   if (filters?.organization_id) {
-    conditions.push(`organization_id = $${params.length + 1}`)
+    conditions.push("organization_id = $" + (params.length + 1))
     params.push(filters.organization_id)
   }
 
@@ -93,50 +94,44 @@ export async function getCases(filters?: {
   query += " ORDER BY created_at DESC"
 
   if (filters?.limit) {
-    query += ` LIMIT $${params.length + 1}`
+    query += " LIMIT $" + (params.length + 1)
     params.push(filters.limit)
   }
 
-  return await sql(query, params)
+  // Use sql.query for parameterized queries
+  if (params.length > 0) {
+    return await sql.query(query, params)
+  } else {
+    return await sql`SELECT * FROM cases ORDER BY created_at DESC`
+  }
 }
 
 export async function getCaseById(id: number) {
-  const result = await sql("SELECT * FROM cases WHERE id = $1", [id])
+  const result = await sql`SELECT * FROM cases WHERE id = ${id}`
   return result[0] || null
 }
 
 export async function getSightingsByCase(caseId: number) {
-  return await sql("SELECT * FROM sightings WHERE case_id = $1 ORDER BY created_at DESC", [caseId])
+  return await sql`SELECT * FROM sightings WHERE case_id = ${caseId} ORDER BY created_at DESC`
 }
 
 export async function createSighting(sighting: Omit<Sighting, "id" | "created_at" | "updated_at">) {
-  const result = await sql(
-    `
+  const result = await sql`
     INSERT INTO sightings (
       case_id, reporter_name, reporter_email, reporter_phone,
       sighting_location, sighting_date, sighting_time, description,
       photo_urls, confidence_level, status
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    ) VALUES (
+      ${sighting.case_id}, ${sighting.reporter_name}, ${sighting.reporter_email}, ${sighting.reporter_phone},
+      ${sighting.sighting_location}, ${sighting.sighting_date}, ${sighting.sighting_time}, ${sighting.description},
+      ${sighting.photo_urls}, ${sighting.confidence_level}, ${sighting.status}
+    )
     RETURNING *
-  `,
-    [
-      sighting.case_id,
-      sighting.reporter_name,
-      sighting.reporter_email,
-      sighting.reporter_phone,
-      sighting.sighting_location,
-      sighting.sighting_date,
-      sighting.sighting_time,
-      sighting.description,
-      sighting.photo_urls,
-      sighting.confidence_level,
-      sighting.status,
-    ],
-  )
+  `
 
   return result[0]
 }
 
 export async function getOrganizations() {
-  return await sql("SELECT * FROM organizations WHERE verification_status = $1 ORDER BY name", ["verified"])
+  return await sql`SELECT * FROM organizations WHERE verification_status = 'verified' ORDER BY name`
 }
