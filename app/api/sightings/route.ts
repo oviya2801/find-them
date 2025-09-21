@@ -21,17 +21,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Create the sighting
     const sighting = await createSighting({
-      case_id: Number.parseInt(body.case_id),
+      case_id: body.case_id, // MongoDB ObjectId as string
       reporter_name: body.reporter_name,
       reporter_email: body.reporter_email,
       reporter_phone: body.reporter_phone,
       sighting_location: body.sighting_location,
-      sighting_date: body.sighting_date,
-      sighting_time: body.sighting_time || null,
+      sighting_date: new Date(body.sighting_date), // Convert to Date object
+      sighting_time: body.sighting_time || undefined,
       description: body.description,
-      confidence_level: body.confidence_level ? Number.parseInt(body.confidence_level) : null,
+      confidence_level: body.confidence_level ? Number.parseInt(body.confidence_level) : undefined,
       status: "pending",
     })
 

@@ -1,140 +1,194 @@
-import { neon } from "@neondatabase/serverless"
+import { MongoClient, type Db, ObjectId } from "mongodb"
 
-const sql = neon(process.env.DATABASE_URL!)
+let client: MongoClient
+let db: Db
 
-export { sql }
+// Initialize MongoDB connection
+async function connectToDatabase() {
+  if (!client) {
+    client = new MongoClient(process.env.MONGODB_URI!)
+    await client.connect()
+    db = client.db("findthem")
+  }
+  return { client, db }
+}
 
-// Database types
+// Get database collections
+export async function getCollections() {
+  const { db } = await connectToDatabase()
+  return {
+    organizations: db.collection("organizations"),
+    users: db.collection("users"),
+    cases: db.collection("cases"),
+    sightings: db.collection("sightings"),
+    photoEmbeddings: db.collection("photo_embeddings"),
+  }
+}
+
+// Database types (updated for MongoDB)
 export interface Organization {
-  id: number
+  _id?: ObjectId
   name: string
   type: "ngo" | "police" | "government"
   contact_email: string
   contact_phone?: string
   address?: string
   verification_status: "pending" | "verified" | "rejected"
-  created_at: string
-  updated_at: string
+  created_at: Date
+  updated_at: Date
 }
 
 export interface PlatformUser {
-  id: number
+  _id?: ObjectId
   email: string
   name: string
   role: "public" | "ngo_admin" | "ngo_member" | "police" | "admin"
-  organization_id?: number
+  organization_id?: ObjectId
   phone?: string
   is_verified: boolean
-  created_at: string
-  updated_at: string
+  created_at: Date
+  updated_at: Date
 }
 
 export interface Case {
-  id: number
+  _id?: ObjectId
   child_name: string
   age?: number
   gender?: "male" | "female" | "other"
   description?: string
   last_seen_location?: string
-  last_seen_date?: string
+  last_seen_date?: Date
   case_number?: string
   status: "active" | "found" | "closed"
   priority: "low" | "medium" | "high" | "urgent"
-  organization_id: number
-  created_by: number
+  organization_id: ObjectId
+  created_by: ObjectId
   photo_urls?: string[]
   additional_info?: any
-  created_at: string
-  updated_at: string
+  created_at: Date
+  updated_at: Date
 }
 
 export interface Sighting {
-  id: number
-  case_id: number
+  _id?: ObjectId
+  case_id: ObjectId
   reporter_name?: string
   reporter_email?: string
   reporter_phone?: string
   sighting_location: string
-  sighting_date: string
+  sighting_date: Date
   sighting_time?: string
   description?: string
   photo_urls?: string[]
   confidence_level?: number
   status: "pending" | "verified" | "false_positive"
-  verified_by?: number
-  created_at: string
-  updated_at: string
+  verified_by?: ObjectId
+  created_at: Date
+  updated_at: Date
 }
 
 // Database query functions
 export async function getCases(filters?: {
   status?: string
-  organization_id?: number
+  organization_id?: string
   limit?: number
 }) {
-  // Handle different filter combinations with separate tagged template queries
-  const limit = filters?.limit || 1000 // Default limit to prevent huge queries
+  try {
+    const { cases } = await getCollections()
+    const limit = filters?.limit || 1000
 
-  if (filters?.status && filters?.organization_id) {
-    // Both status and organization filters
-    return await sql`
-      SELECT * FROM cases 
-      WHERE status = ${filters.status} AND organization_id = ${filters.organization_id}
-      ORDER BY created_at DESC 
-      LIMIT ${limit}
-    `
-  } else if (filters?.status) {
-    // Only status filter
-    return await sql`
-      SELECT * FROM cases 
-      WHERE status = ${filters.status}
-      ORDER BY created_at DESC 
-      LIMIT ${limit}
-    `
-  } else if (filters?.organization_id) {
-    // Only organization filter
-    return await sql`
-      SELECT * FROM cases 
-      WHERE organization_id = ${filters.organization_id}
-      ORDER BY created_at DESC 
-      LIMIT ${limit}
-    `
-  } else {
-    // No filters or only limit
-    return await sql`
-      SELECT * FROM cases 
-      ORDER BY created_at DESC 
-      LIMIT ${limit}
-    `
+    const query: any = {}
+
+    if (filters?.status) {
+      query.status = filters.status
+    }
+
+    if (filters?.organization_id) {
+      query.organization_id = new ObjectId(filters.organization_id)
+    }
+
+    const result = await cases.find(query).sort({ created_at: -1 }).limit(limit).toArray()
+
+    return result
+  } catch (error) {
+    console.error("Database error in getCases:", error)
+    return []
   }
 }
 
-export async function getCaseById(id: number) {
-  const result = await sql`SELECT * FROM cases WHERE id = ${id}`
-  return result[0] || null
+export async function getCaseById(id: string) {
+  try {
+    const { cases } = await getCollections()
+    const result = await cases.findOne({ _id: new ObjectId(id) })
+    return result
+  } catch (error) {
+    console.error("Database error in getCaseById:", error)
+    return null
+  }
 }
 
-export async function getSightingsByCase(caseId: number) {
-  return await sql`SELECT * FROM sightings WHERE case_id = ${caseId} ORDER BY created_at DESC`
+export async function getSightingsByCase(caseId: string) {
+  try {
+    const { sightings } = await getCollections()
+    const result = await sightings
+      .find({ case_id: new ObjectId(caseId) })
+      .sort({ created_at: -1 })
+      .toArray()
+    return result
+  } catch (error) {
+    console.error("Database error in getSightingsByCase:", error)
+    return []
+  }
 }
 
-export async function createSighting(sighting: Omit<Sighting, "id" | "created_at" | "updated_at">) {
-  const result = await sql`
-    INSERT INTO sightings (
-      case_id, reporter_name, reporter_email, reporter_phone,
-      sighting_location, sighting_date, sighting_time, description,
-      photo_urls, confidence_level, status
-    ) VALUES (
-      ${sighting.case_id}, ${sighting.reporter_name}, ${sighting.reporter_email}, ${sighting.reporter_phone},
-      ${sighting.sighting_location}, ${sighting.sighting_date}, ${sighting.sighting_time}, ${sighting.description},
-      ${sighting.photo_urls}, ${sighting.confidence_level}, ${sighting.status}
-    )
-    RETURNING *
-  `
+export async function createSighting(sighting: Omit<Sighting, "_id" | "created_at" | "updated_at">) {
+  try {
+    const { sightings } = await getCollections()
 
-  return result[0]
+    const newSighting = {
+      ...sighting,
+      case_id: new ObjectId(sighting.case_id),
+      sighting_date: new Date(sighting.sighting_date),
+      created_at: new Date(),
+      updated_at: new Date(),
+    }
+
+    const result = await sightings.insertOne(newSighting)
+    return { ...newSighting, _id: result.insertedId }
+  } catch (error) {
+    console.error("Database error in createSighting:", error)
+    throw new Error("Unable to create sighting. Please check your database connection.")
+  }
 }
 
 export async function getOrganizations() {
-  return await sql`SELECT * FROM organizations WHERE verification_status = 'verified' ORDER BY name`
+  try {
+    const { organizations } = await getCollections()
+    const result = await organizations.find({ verification_status: "verified" }).sort({ name: 1 }).toArray()
+    return result
+  } catch (error) {
+    console.error("Database error in getOrganizations:", error)
+    return []
+  }
+}
+
+export async function createCase(caseData: Omit<Case, "_id" | "created_at" | "updated_at">) {
+  try {
+    const { cases } = await getCollections()
+
+    const newCase = {
+      ...caseData,
+      organization_id: new ObjectId(caseData.organization_id),
+      created_by: new ObjectId(caseData.created_by),
+      last_seen_date: caseData.last_seen_date ? new Date(caseData.last_seen_date) : undefined,
+      created_at: new Date(),
+      updated_at: new Date(),
+    }
+
+    const result = await cases.insertOne(newCase)
+    return { ...newCase, _id: result.insertedId }
+  } catch (error) {
+    console.error("Database error in createCase:", error)
+    throw new Error("Unable to create case. Please check your database connection.")
+  }
 }

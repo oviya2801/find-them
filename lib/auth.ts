@@ -1,17 +1,18 @@
-import { sql } from "@/lib/database"
+import { getCollections } from "@/lib/database"
 import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 import bcrypt from "bcryptjs"
 import jwt from "jsonwebtoken"
+import { ObjectId } from "mongodb"
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-in-production"
 
 export interface AuthUser {
-  id: number
+  _id?: ObjectId
   email: string
   name: string
   role: "public" | "ngo_admin" | "ngo_member" | "police" | "admin"
-  organization_id?: number
+  organization_id?: ObjectId
   organization_name?: string
   is_verified: boolean
 }
@@ -27,10 +28,10 @@ export async function verifyPassword(password: string, hashedPassword: string): 
 export function generateToken(user: AuthUser): string {
   return jwt.sign(
     {
-      id: user.id,
+      _id: user._id?.toString(),
       email: user.email,
       role: user.role,
-      organization_id: user.organization_id,
+      organization_id: user.organization_id?.toString(),
     },
     JWT_SECRET,
     { expiresIn: "7d" },
@@ -59,15 +60,26 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
   }
 
   try {
-    const result = await sql(
-      `
-      SELECT u.*, o.name as organization_name 
-      FROM platform_users u
-      LEFT JOIN organizations o ON u.organization_id = o.id
-      WHERE u.id = $1
-    `,
-      [decoded.id],
-    )
+    const { users } = await getCollections()
+
+    const result = await users
+      .aggregate([
+        { $match: { _id: new ObjectId(decoded._id) } },
+        {
+          $lookup: {
+            from: "organizations",
+            localField: "organization_id",
+            foreignField: "_id",
+            as: "organization",
+          },
+        },
+        {
+          $addFields: {
+            organization_name: { $arrayElemAt: ["$organization.name", 0] },
+          },
+        },
+      ])
+      .toArray()
 
     if (result.length === 0) {
       return null
@@ -75,7 +87,7 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
 
     const user = result[0]
     return {
-      id: user.id,
+      _id: user._id,
       email: user.email,
       name: user.name,
       role: user.role,
@@ -108,15 +120,26 @@ export async function signIn(
   password: string,
 ): Promise<{ success: boolean; user?: AuthUser; error?: string }> {
   try {
-    const result = await sql(
-      `
-      SELECT u.*, o.name as organization_name 
-      FROM platform_users u
-      LEFT JOIN organizations o ON u.organization_id = o.id
-      WHERE u.email = $1
-    `,
-      [email],
-    )
+    const { users } = await getCollections()
+
+    const result = await users
+      .aggregate([
+        { $match: { email: email } },
+        {
+          $lookup: {
+            from: "organizations",
+            localField: "organization_id",
+            foreignField: "_id",
+            as: "organization",
+          },
+        },
+        {
+          $addFields: {
+            organization_name: { $arrayElemAt: ["$organization.name", 0] },
+          },
+        },
+      ])
+      .toArray()
 
     if (result.length === 0) {
       return { success: false, error: "Invalid email or password" }
@@ -131,7 +154,7 @@ export async function signIn(
     // }
 
     const authUser: AuthUser = {
-      id: user.id,
+      _id: user._id,
       email: user.email,
       name: user.name,
       role: user.role,
@@ -156,41 +179,37 @@ export async function createUser(userData: {
   email: string
   name: string
   role: string
-  organization_id?: number
+  organization_id?: ObjectId
   phone?: string
 }): Promise<{ success: boolean; user?: AuthUser; error?: string }> {
   try {
-    const result = await sql(
-      `
-      INSERT INTO platform_users (email, name, role, organization_id, phone, is_verified)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING *
-    `,
-      [
-        userData.email,
-        userData.name,
-        userData.role,
-        userData.organization_id || null,
-        userData.phone || null,
-        false, // New users need verification
-      ],
-    )
+    const { users } = await getCollections()
 
-    const user = result[0]
+    const result = await users.insertOne({
+      email: userData.email,
+      name: userData.name,
+      role: userData.role,
+      organization_id: userData.organization_id || undefined,
+      phone: userData.phone || undefined,
+      is_verified: false, // New users need verification
+      created_at: new Date(),
+      updated_at: new Date(),
+    })
+
     const authUser: AuthUser = {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      organization_id: user.organization_id,
-      is_verified: user.is_verified,
+      _id: result.insertedId,
+      email: userData.email,
+      name: userData.name,
+      role: userData.role as any,
+      organization_id: userData.organization_id,
+      is_verified: false,
     }
 
     return { success: true, user: authUser }
   } catch (error: any) {
     console.error("Create user error:", error)
-    if (error.code === "23505") {
-      // Unique constraint violation
+    if (error.code === 11000) {
+      // Duplicate key error (unique constraint violation)
       return { success: false, error: "Email already exists" }
     }
     return { success: false, error: "An error occurred during registration" }

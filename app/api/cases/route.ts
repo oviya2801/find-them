@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { getCurrentUser } from "@/lib/auth"
-import { sql } from "@/lib/database"
+import { createCase } from "@/lib/database"
 
 export async function POST(request: NextRequest) {
   try {
@@ -22,32 +22,22 @@ export async function POST(request: NextRequest) {
     // Generate case number
     const caseNumber = `${user.organization_id}-${Date.now()}`
 
-    // Create the case
-    const result = await sql(
-      `
-      INSERT INTO cases (
-        child_name, age, gender, description, last_seen_location, last_seen_date,
-        case_number, status, priority, organization_id, created_by, additional_info
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-      RETURNING *
-    `,
-      [
-        body.child_name,
-        body.age ? Number.parseInt(body.age) : null,
-        body.gender || null,
-        body.description,
-        body.last_seen_location,
-        body.last_seen_date,
-        caseNumber,
-        "active",
-        body.priority || "medium",
-        user.organization_id,
-        user.id,
-        JSON.stringify(body.additional_info || {}),
-      ],
-    )
+    const newCase = await createCase({
+      child_name: body.child_name,
+      age: body.age ? Number.parseInt(body.age) : undefined,
+      gender: body.gender || undefined,
+      description: body.description,
+      last_seen_location: body.last_seen_location,
+      last_seen_date: new Date(body.last_seen_date),
+      case_number: caseNumber,
+      status: "active",
+      priority: body.priority || "medium",
+      organization_id: user.organization_id!,
+      created_by: user._id!,
+      additional_info: body.additional_info || {},
+    })
 
-    return NextResponse.json({ success: true, case: result[0] })
+    return NextResponse.json({ success: true, case: newCase })
   } catch (error) {
     console.error("Error creating case:", error)
     return NextResponse.json({ error: "Failed to create case" }, { status: 500 })

@@ -9,7 +9,7 @@ function generateMockMatches(cases: any[]) {
     .filter((c: any) => c.status === "active")
     .slice(0, 5)
     .map((case_item: any) => ({
-      case_id: case_item.id,
+      case_id: case_item._id.toString(),
       child_name: case_item.child_name,
       case_number: case_item.case_number,
       photo_url: case_item.photo_urls?.[0] || null,

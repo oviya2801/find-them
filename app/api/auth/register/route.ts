@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { sql } from "@/lib/database"
+import { getCollections } from "@/lib/database"
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,42 +14,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Missing required user fields" }, { status: 400 })
     }
 
-    // Start transaction
     try {
-      // Create organization
-      const orgResult = await sql(
-        `
-        INSERT INTO organizations (name, type, contact_email, contact_phone, address, verification_status)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id
-      `,
-        [
-          organization.name,
-          organization.type,
-          organization.contact_email,
-          organization.contact_phone || null,
-          organization.address || null,
-          "pending", // New organizations need verification
-        ],
-      )
+      const { organizations, users } = await getCollections()
 
-      const organizationId = orgResult[0].id
+      // Create organization
+      const orgResult = await organizations.insertOne({
+        name: organization.name,
+        type: organization.type,
+        contact_email: organization.contact_email,
+        contact_phone: organization.contact_phone || undefined,
+        address: organization.address || undefined,
+        verification_status: "pending", // New organizations need verification
+        created_at: new Date(),
+        updated_at: new Date(),
+      })
+
+      const organizationId = orgResult.insertedId
 
       // Create user
-      await sql(
-        `
-        INSERT INTO platform_users (email, name, role, organization_id, phone, is_verified)
-        VALUES ($1, $2, $3, $4, $5, $6)
-      `,
-        [
-          user.email,
-          user.name,
-          user.role,
-          organizationId,
-          user.phone || null,
-          false, // New users need verification
-        ],
-      )
+      await users.insertOne({
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        organization_id: organizationId,
+        phone: user.phone || undefined,
+        is_verified: false, // New users need verification
+        created_at: new Date(),
+        updated_at: new Date(),
+      })
 
       return NextResponse.json({
         success: true,
@@ -57,8 +49,8 @@ export async function POST(request: NextRequest) {
       })
     } catch (dbError: any) {
       console.error("Database error:", dbError)
-      if (dbError.code === "23505") {
-        // Unique constraint violation
+      if (dbError.code === 11000) {
+        // Duplicate key error (unique constraint violation)
         return NextResponse.json({ success: false, error: "Email already exists" }, { status: 400 })
       }
       throw dbError
