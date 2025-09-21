@@ -72,37 +72,40 @@ export async function getCases(filters?: {
   organization_id?: number
   limit?: number
 }) {
-  // Build the base query with optional WHERE conditions
-  let query = "SELECT * FROM cases"
-  const conditions: string[] = []
-  const params: any[] = []
+  // Handle different filter combinations with separate tagged template queries
+  const limit = filters?.limit || 1000 // Default limit to prevent huge queries
 
-  if (filters?.status) {
-    conditions.push("status = $" + (params.length + 1))
-    params.push(filters.status)
-  }
-
-  if (filters?.organization_id) {
-    conditions.push("organization_id = $" + (params.length + 1))
-    params.push(filters.organization_id)
-  }
-
-  if (conditions.length > 0) {
-    query += " WHERE " + conditions.join(" AND ")
-  }
-
-  query += " ORDER BY created_at DESC"
-
-  if (filters?.limit) {
-    query += " LIMIT $" + (params.length + 1)
-    params.push(filters.limit)
-  }
-
-  // Use sql.query for parameterized queries
-  if (params.length > 0) {
-    return await sql.query(query, params)
+  if (filters?.status && filters?.organization_id) {
+    // Both status and organization filters
+    return await sql`
+      SELECT * FROM cases 
+      WHERE status = ${filters.status} AND organization_id = ${filters.organization_id}
+      ORDER BY created_at DESC 
+      LIMIT ${limit}
+    `
+  } else if (filters?.status) {
+    // Only status filter
+    return await sql`
+      SELECT * FROM cases 
+      WHERE status = ${filters.status}
+      ORDER BY created_at DESC 
+      LIMIT ${limit}
+    `
+  } else if (filters?.organization_id) {
+    // Only organization filter
+    return await sql`
+      SELECT * FROM cases 
+      WHERE organization_id = ${filters.organization_id}
+      ORDER BY created_at DESC 
+      LIMIT ${limit}
+    `
   } else {
-    return await sql`SELECT * FROM cases ORDER BY created_at DESC`
+    // No filters or only limit
+    return await sql`
+      SELECT * FROM cases 
+      ORDER BY created_at DESC 
+      LIMIT ${limit}
+    `
   }
 }
 
